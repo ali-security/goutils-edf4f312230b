@@ -1,0 +1,85 @@
+name: pack
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go (zip tooling only)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+
+      - name: Sanity compile
+        shell: bash
+        env:
+          GO111MODULE: 'off'
+        run: |
+          set -euo pipefail
+          go build -v .
+
+      - name: Pack module zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Stage the module source outside the workspace, minus repo-only dirs.
+          mkdir -p "$RUNNER_TEMP/modsrc"
+          cp -a "$GITHUB_WORKSPACE"/. "$RUNNER_TEMP/modsrc"/
+          # Upstream ships no .github dir; this workflow file must not end up in the zip.
+          rm -rf "$RUNNER_TEMP/modsrc/.github"
+          rm -rf "$RUNNER_TEMP/modsrc/.git"
+
+          # Helper module that drives golang.org/x/mod/zip.CreateFromDir.
+          mkdir -p "$RUNNER_TEMP/ziptool"
+          cd "$RUNNER_TEMP/ziptool"
+          go mod init example.com/ziptool
+          cat > main.go <<'EOF'
+          package main
+
+          import (
+              "log"
+              "os"
+
+              "golang.org/x/mod/module"
+              "golang.org/x/mod/zip"
+          )
+
+          func main() {
+              if len(os.Args) != 5 {
+                  log.Fatalf("usage: %s <module-path> <version> <src-dir> <out-zip>", os.Args[0])
+              }
+              f, err := os.Create(os.Args[4])
+              if err != nil {
+                  log.Fatal(err)
+              }
+              if err := zip.CreateFromDir(f, module.Version{Path: os.Args[1], Version: os.Args[2]}, os.Args[3]); err != nil {
+                  f.Close()
+                  log.Fatal(err)
+              }
+              if err := f.Close(); err != nil {
+                  log.Fatal(err)
+              }
+          }
+          EOF
+          go get golang.org/x/mod@v0.17.0
+          go mod tidy
+
+          mkdir -p "$RUNNER_TEMP/out"
+          go run . github.com/Masterminds/goutils v1.1.0 "$RUNNER_TEMP/modsrc" "$RUNNER_TEMP/out/v1.1.0.zip"
+
+          unzip -l "$RUNNER_TEMP/out/v1.1.0.zip"
+
+      - name: Upload module zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip
+          path: ${{ runner.temp }}/out/v1.1.0.zip
+          if-no-files-found: error

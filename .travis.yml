@@ -1,10 +1,13 @@
 language: go
 
 go:
-  - 1.6
-  - 1.7
-  - 1.8
-  - tip
+  - 1.6.4
+  - 1.7.6
+  - 1.8.7
+  - 1.11.2
+
+install:
+  - go build -v .
 
 script:
   - go test -v
